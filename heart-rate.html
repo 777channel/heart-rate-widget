@@ -1,0 +1,919 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>实时心率 · Heart Rate Display</title>
+<style>
+  :root{
+    --bg:#080a0e; --panel:#0f131a; --line:#1d2531;
+    --fg:#e9eef7; --muted:#7b8798; --accent:#ff3b5c;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1400px 700px at 12% -20%, #172131 0%, rgba(8,10,14,0) 60%),
+      radial-gradient(900px 600px at 100% 0%, #1b1220 0%, rgba(8,10,14,0) 55%),
+      var(--bg);
+    color:var(--fg);
+    font-family:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+    user-select:none;
+  }
+  [hidden]{display:none !important}
+
+  #app{height:100dvh;display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:14px;padding:18px 22px}
+
+  /* ---------- header ---------- */
+  header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .brand{display:flex;align-items:baseline;gap:10px;font-size:12px;letter-spacing:.28em;color:var(--muted);text-transform:uppercase}
+  .brand b{color:var(--fg);font-weight:600;letter-spacing:.24em}
+  .brand span{font-size:11px;letter-spacing:.1em;color:#4d5866}
+  .conn{display:flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--line);
+        border-radius:999px;background:rgba(255,255,255,.02);font-size:13px;color:var(--muted);
+        transition:color .2s,border-color .2s}
+  .conn .dot{width:8px;height:8px;border-radius:50%;background:#59646f;transition:background .2s,box-shadow .2s}
+  .conn[data-kind="connected"]{color:#c8f2dc;border-color:#1f4b38}
+  .conn[data-kind="connected"] .dot{background:#35d07f;box-shadow:0 0 10px #35d07f}
+  .conn[data-kind="searching"]{color:#ffe2a8;border-color:#4a3a16}
+  .conn[data-kind="searching"] .dot{background:#ffc44d;box-shadow:0 0 10px #ffc44d;animation:blink 1s infinite}
+  .conn[data-kind="connecting"]{color:#ffd9a8;border-color:#4a3a16}
+  .conn[data-kind="connecting"] .dot{background:#ffa53d;box-shadow:0 0 10px #ffa53d;animation:blink .7s infinite}
+  .conn[data-kind="lost"]{color:#ffb9c4;border-color:#4d1f28}
+  .conn[data-kind="lost"] .dot{background:#ff3b5c;box-shadow:0 0 10px #ff3b5c;animation:blink .9s infinite}
+  .conn[data-kind="demo"]{color:#d6c8ff;border-color:#372a5c}
+  .conn[data-kind="demo"] .dot{background:#a98bff;box-shadow:0 0 10px #a98bff}
+  @keyframes blink{50%{opacity:.25}}
+
+  /* ---------- main ---------- */
+  #main{display:grid;grid-template-columns:minmax(300px,33%) minmax(0,1fr);gap:14px;min-height:0}
+  .panel{background:linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.008));
+         border:1px solid var(--line);border-radius:22px}
+
+  .hero{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+        padding:24px 20px;position:relative;overflow:hidden}
+  .hero::after{content:"";position:absolute;inset:auto 0 -40% 0;height:70%;
+        background:radial-gradient(closest-side,rgba(255,59,92,.13),rgba(255,59,92,0));pointer-events:none}
+
+  .heart{width:clamp(54px,7vw,86px);height:auto;color:var(--accent);margin-bottom:6px;
+         filter:drop-shadow(0 0 16px currentColor);transform-origin:50% 55%;
+         animation:beat 1s ease-out infinite}
+  .heart.idle{animation-play-state:paused;opacity:.45}
+  /* ---- 小窗（画中画置顶） ---- */
+  .mini-body{background:#0a0d13;margin:0;height:100vh;overflow:hidden;display:flex;
+    align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;
+    font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;cursor:default}
+  .mini-card{display:flex;align-items:center;gap:9px;padding:0 4px}
+  .mini-heart{width:24px;height:22px;flex:none;color:#ff3b5c;
+    transform-origin:50% 55%;animation:beat 1s ease-out infinite}
+  .mini-heart.idle{animation-play-state:paused;opacity:.45}
+  .mini-num{font:600 32px/1 ui-monospace,"Cascadia Mono",Consolas,monospace;
+    color:#fff;min-width:58px;text-align:right;letter-spacing:-.02em}
+  .mini-side{display:flex;flex-direction:column;gap:3px;padding-top:2px}
+  .mini-unit{font-size:9px;letter-spacing:.16em;color:#74849a}
+  .mini-zone{font-size:10px;color:#9aa8bb}
+  @keyframes beat{
+    0%{transform:scale(1)} 10%{transform:scale(1.16)} 20%{transform:scale(.97)}
+    30%{transform:scale(1.07)} 42%{transform:scale(1)} 100%{transform:scale(1)}
+  }
+
+  .bpm{display:flex;align-items:baseline;gap:8px;line-height:.9;position:relative;z-index:1}
+  .bpm .num{font-family:"Bahnschrift SemiCondensed","Bahnschrift","Segoe UI",sans-serif;
+            font-size:clamp(88px,13.5vw,190px);font-weight:600;letter-spacing:-.03em;
+            font-variant-numeric:tabular-nums;text-shadow:0 8px 40px rgba(0,0,0,.55)}
+  .bpm .unit{font-size:clamp(13px,1.2vw,17px);letter-spacing:.22em;color:var(--muted);padding-bottom:.8em}
+
+  .zone{margin-top:14px;display:inline-flex;align-items:center;gap:9px;padding:7px 16px;border-radius:999px;
+        font-size:14px;letter-spacing:.06em;background:rgba(255,255,255,.04);
+        border:1px solid rgba(255,255,255,.07);color:var(--muted);position:relative;z-index:1}
+  .zone b{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 9px currentColor}
+  .hero .hint{margin-top:10px;font-size:12.5px;color:#5b6675;letter-spacing:.02em;position:relative;z-index:1}
+
+  /* ---------- right column ---------- */
+  .right{display:grid;grid-template-rows:minmax(0,1fr) auto;gap:14px;min-height:0}
+  .chartbox{position:relative;min-height:0;padding:6px 8px 4px}
+  canvas{display:block;width:100%;height:100%}
+
+  .stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+  .stat{background:linear-gradient(180deg,rgba(255,255,255,.026),rgba(255,255,255,.006));
+        border:1px solid var(--line);border-radius:16px;padding:12px 14px;min-width:0}
+  .stat .k{font-size:11px;letter-spacing:.16em;color:#5e6a79;text-transform:uppercase}
+  .stat .v{margin-top:6px;font-size:clamp(18px,1.8vw,26px);font-weight:600;
+           font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stat .v small{font-size:.5em;color:var(--muted);font-weight:400;margin-left:3px;letter-spacing:.08em}
+
+  /* ---------- footer ---------- */
+  footer{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  footer .spacer{flex:1}
+  button{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.035);color:var(--fg);
+         padding:10px 18px;border-radius:12px;font-size:13.5px;font-family:inherit;cursor:pointer;
+         transition:background .15s,border-color .15s,transform .06s;letter-spacing:.02em}
+  button:hover{background:rgba(255,255,255,.08);border-color:#2b3646}
+  button:active{transform:translateY(1px)}
+  button.primary{background:linear-gradient(180deg,#ff4d68,#e32746);border-color:#ff5f78;font-weight:600;
+                 box-shadow:0 6px 18px rgba(255,59,92,.24)}
+  button.primary:hover{background:linear-gradient(180deg,#ff5c76,#f02f4f)}
+  button.ghost{background:transparent}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .battery{font-size:12px;color:#5e6a79;letter-spacing:.05em;margin-left:2px}
+  .keys{font-size:11.5px;color:#4a5462;letter-spacing:.04em}
+  .keys kbd{font-family:inherit;border:1px solid #232c39;border-bottom-width:2px;border-radius:5px;
+            padding:1px 5px;color:#8b97a8;font-size:10.5px;background:#11161e}
+
+  /* ---------- settings popover ---------- */
+  #settings{position:fixed;right:22px;bottom:74px;z-index:40;width:270px;padding:16px 16px 12px;
+            background:#11161f;border:1px solid #232c39;border-radius:16px;
+            box-shadow:0 24px 60px rgba(0,0,0,.6)}
+  #settings label{display:flex;align-items:center;justify-content:space-between;gap:10px;
+                  font-size:13px;color:#a7b3c3;margin-bottom:11px}
+  #settings input,#settings select{width:110px;background:#0b0f15;border:1px solid #232c39;color:var(--fg);
+            border-radius:8px;padding:7px 9px;font-family:inherit;font-size:13px;text-align:right}
+  #settings input:focus,#settings select:focus{outline:none;border-color:#3a4a60}
+  #settings .hint2{font-size:11.5px;color:#5b6675;line-height:1.5;margin:2px 0 4px}
+
+  /* ---------- toast / warn ---------- */
+  #toast{position:fixed;left:50%;bottom:86px;transform:translate(-50%,14px);z-index:60;
+         background:#161d28;border:1px solid #2a3546;border-radius:12px;padding:11px 18px;font-size:13.5px;
+         color:#d5deea;box-shadow:0 18px 40px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.22s}
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+  #warn{margin:0 22px;padding:10px 16px;border-radius:12px;background:#2a1d10;border:1px solid #57391a;
+        color:#ffcf9b;font-size:13px;line-height:1.6}
+  #warn code{background:#1b130a;padding:2px 6px;border-radius:5px;color:#ffd9b0}
+
+  @media (max-width:900px){
+    #main{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
+    .hero{padding:16px}
+    .bpm .num{font-size:clamp(72px,18vw,120px)}
+    .stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .hero .hint{display:none}
+  }
+</style>
+</head>
+<body>
+<div id="warn" hidden>
+  当前浏览器不支持 Web Bluetooth 或不是安全上下文。请用 <b>Chrome / Edge</b> 打开，
+  并用本地服务器方式访问（双击同目录下的 <code>服务器模式.bat</code>）。
+</div>
+
+<div id="app">
+  <header>
+    <div class="brand"><b>HEART RATE</b><span>LIVE</span></div>
+    <div class="conn" id="conn" data-kind="idle">
+      <span class="dot"></span><span id="connText">未连接</span>
+    </div>
+  </header>
+
+  <div id="main">
+    <section class="panel hero">
+      <svg class="heart idle" id="heart" viewBox="0 0 32 29" aria-hidden="true">
+        <path fill="currentColor" d="M16 28.2S1.2 19.1 1.2 9.9C1.2 5 5.1 1.1 9.8 1.1c3.2 0 5.2 1.8 6.2 3.3 1-1.5 3-3.3 6.2-3.3 4.7 0 8.6 3.9 8.6 8.8 0 9.2-14.8 18.3-14.8 18.3z"/>
+      </svg>
+      <div class="bpm"><span class="num" id="bpm">--</span><span class="unit">BPM</span></div>
+      <div class="zone" id="zone"><b></b><span id="zoneText">等待连接</span></div>
+      <div class="hint" id="hint">点下方「连接设备」，选择 HeartCast / 心率广播</div>
+    </section>
+
+    <div class="right">
+      <section class="panel chartbox"><canvas id="chart"></canvas></section>
+      <section class="stats">
+        <div class="stat"><div class="k">最低</div><div class="v" id="statMin">--</div></div>
+        <div class="stat"><div class="k">平均</div><div class="v" id="statAvg">--</div></div>
+        <div class="stat"><div class="k">最高</div><div class="v" id="statMax">--</div></div>
+        <div class="stat"><div class="k">时长</div><div class="v" id="statTime">0:00</div></div>
+        <div class="stat"><div class="k">采样</div><div class="v" id="statCount">0</div></div>
+      </section>
+    </div>
+  </div>
+
+  <footer>
+    <button class="primary" id="btnConnect">连接设备</button>
+    <button class="ghost" id="btnDisconnect" disabled>断开</button>
+    <button class="ghost" id="btnDemo">演示模式</button>
+    <span class="spacer"></span>
+    <span class="battery" id="battery" hidden></span>
+    <span class="keys"><kbd>空格</kbd> 连接/断开 &nbsp;<kbd>M</kbd> 小窗 &nbsp;<kbd>F</kbd> 全屏 &nbsp;<kbd>D</kbd> 演示 &nbsp;<kbd>E</kbd> 导出</span>
+    <button class="ghost" id="btnMini">小窗置顶</button>
+    <button class="ghost" id="btnFull">全屏</button>
+    <button class="ghost" id="btnExport">导出 CSV</button>
+    <button class="ghost" id="btnSettings">设置</button>
+  </footer>
+</div>
+
+<div id="settings" hidden>
+  <label>年龄<input id="inAge" type="number" min="5" max="100" step="1"></label>
+  <label>最大心率<input id="inMax" type="number" min="100" max="230" step="1" placeholder="自动"></label>
+  <label>曲线窗口
+    <select id="inWin">
+      <option value="60">60 秒</option>
+      <option value="120">2 分钟</option>
+      <option value="300">5 分钟</option>
+    </select>
+  </label>
+  <p class="hint2">最大心率留空时按 220 − 年龄 估算，用于划分心率区间。设置会自动保存。</p>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ---------------- 常量与小工具 ---------------- */
+const $ = (s) => document.querySelector(s);
+
+const ZONES = [
+  { name: '热身', lo: 0.00, hi: 0.60, color: '#4f9dff' },
+  { name: '燃脂', lo: 0.60, hi: 0.70, color: '#35d07f' },
+  { name: '有氧', lo: 0.70, hi: 0.80, color: '#ffd23f' },
+  { name: '阈值', lo: 0.80, hi: 0.90, color: '#ff8a3d' },
+  { name: '极限', lo: 0.90, hi: 9.99, color: '#ff3b5c' },
+];
+
+const PAD = { l: 42, r: 14, t: 14, b: 24 };
+const STORE_KEY = 'hr-display-settings-v1';
+
+const els = {
+  conn: $('#conn'), connText: $('#connText'),
+  bpm: $('#bpm'), zone: $('#zone'), zoneText: $('#zoneText'), hint: $('#hint'),
+  heart: $('#heart'), canvas: $('#chart'),
+  statMin: $('#statMin'), statAvg: $('#statAvg'), statMax: $('#statMax'),
+  statTime: $('#statTime'), statCount: $('#statCount'),
+  btnConnect: $('#btnConnect'), btnDisconnect: $('#btnDisconnect'), btnDemo: $('#btnDemo'),
+  btnFull: $('#btnFull'), btnMini: $('#btnMini'), btnExport: $('#btnExport'), btnSettings: $('#btnSettings'),
+  panel: $('#settings'), inAge: $('#inAge'), inMax: $('#inMax'), inWin: $('#inWin'),
+  battery: $('#battery'), toast: $('#toast'), warn: $('#warn'), app: $('#app'),
+};
+
+const state = {
+  device: null,
+  characteristic: null,
+  connected: false,
+  demo: false,
+  pip: null,
+  miniKey: '',
+  manual: false,
+  samples: [],          // { t: 毫秒时间戳, bpm: 数字 }
+  lastDataAt: 0,
+  lastBpm: 0,
+  zoneColor: '#ff3b5c',
+  settings: { age: 30, maxhr: 0, window: 120 },
+  reconnectTimer: null,
+  reconnectDelay: 1000,
+  wakeLock: null,
+  demoTimer: null,
+  battery: null,
+};
+
+/* ---------------- 设置持久化 ---------------- */
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) Object.assign(state.settings, JSON.parse(raw));
+  } catch (e) { /* 忽略 */ }
+  state.settings.age = clampNum(state.settings.age, 5, 100, 30);
+  state.settings.maxhr = clampNum(state.settings.maxhr, 0, 230, 0);
+  if (![60, 120, 300].includes(state.settings.window)) state.settings.window = 120;
+  els.inAge.value = state.settings.age;
+  els.inMax.value = state.settings.maxhr || '';
+  els.inWin.value = String(state.settings.window);
+}
+
+function saveSettings() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state.settings)); } catch (e) { /* 忽略 */ }
+}
+
+function clampNum(v, min, max, dflt) {
+  v = Number(v);
+  if (!Number.isFinite(v)) return dflt;
+  return Math.min(max, Math.max(min, v));
+}
+
+function maxHR() {
+  if (state.settings.maxhr > 0) return state.settings.maxhr;
+  return 220 - state.settings.age;
+}
+
+function zoneOf(bpm) {
+  const pct = bpm / maxHR();
+  for (const z of ZONES) if (pct < z.hi) return z;
+  return ZONES[ZONES.length - 1];
+}
+
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function fmtClock(ms) {
+  const d = new Date(ms);
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' +
+         pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+}
+
+function fmtFileStamp(ms) {
+  const d = new Date(ms);
+  return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '-' +
+         pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds());
+}
+
+function fmtDur(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h > 0 ? h + ':' + pad2(m) + ':' + pad2(s) : m + ':' + pad2(s);
+}
+
+let toastTimer = null;
+function toast(msg) {
+  els.toast.textContent = msg;
+  els.toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => els.toast.classList.remove('show'), 2600);
+}
+
+/* ---------------- 连接状态展示 ---------------- */
+function setConn(kind, text) {
+  els.conn.dataset.kind = kind;
+  els.connText.textContent = text;
+  els.btnDisconnect.disabled = !(kind === 'connected' || kind === 'connecting' || kind === 'lost' || kind === 'demo');
+}
+
+/* ---------------- 心率数据处理 ---------------- */
+function pushSample(bpm, t) {
+  if (!Number.isFinite(bpm) || bpm <= 0 || bpm > 260) return;
+  if (!state.samples.length) state.samples = [];
+  const last = state.samples[state.samples.length - 1];
+  if (last && t - last.t < 60) { last.bpm = bpm; }   // 同一跳内更新，不重复记点
+  else state.samples.push({ t: t, bpm: bpm });
+
+  // 防止长时间运行内存膨胀：最多保留 3 小时
+  if (state.samples.length > 20000) state.samples.splice(0, state.samples.length - 15000);
+
+  state.lastBpm = bpm;
+  state.lastDataAt = t;
+  const z = zoneOf(bpm);
+  state.zoneColor = z.color;
+
+  if (els.bpm.textContent !== String(bpm)) {
+    els.bpm.textContent = String(bpm);
+    els.bpm.style.color = '#fff';
+  }
+  if (els.zoneText.textContent !== z.name + ' 区') {
+    els.zoneText.textContent = z.name + ' 区';
+  }
+  els.zone.style.color = z.color;
+  els.hint.hidden = true;
+  els.heart.classList.remove('idle');
+  els.heart.style.color = z.color;
+  // 心跳动画周期跟随当前心率
+  els.heart.style.animationDuration = (60 / bpm).toFixed(3) + 's';
+}
+
+function parseHR(event) {
+  const dv = event.target.value;
+  if (!dv || dv.byteLength < 2) return;
+  const flags = dv.getUint8(0);
+  let i = 1;
+  let bpm;
+  if (flags & 0x01) {                    // 16 位心率
+    if (dv.byteLength < 3) return;
+    bpm = dv.getUint16(i, true); i += 2;
+  } else {                               // 8 位心率
+    bpm = dv.getUint8(i); i += 1;
+  }
+  if (flags & 0x08) i += 2;              // 能量消耗字段，跳过
+  // flags & 0x10 后面是 RR 间期，这里不需要
+  pushSample(bpm, Date.now());
+}
+
+/* ---------------- 蓝牙连接 ---------------- */
+async function connect() {
+  if (!navigator.bluetooth) {
+    toast('当前浏览器不支持 Web Bluetooth，请用 Chrome 或 Edge');
+    return;
+  }
+  if (state.demo) stopDemo();
+  state.manual = false;
+  setConn('searching', '选择心率设备…');
+
+  let device;
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: ['heart_rate'] }],
+      optionalServices: ['battery_service', 'device_information'],
+    });
+  } catch (err) {
+    setConn('idle', '未连接');
+    if (err && err.name !== 'NotFoundError') toast('选择设备失败：' + (err.message || err));
+    return;
+  }
+
+  state.samples = [];
+  state.device = device;
+  try { device.removeEventListener('gattserverdisconnected', onDisconnected); } catch (e) {}
+  device.addEventListener('gattserverdisconnected', onDisconnected);
+
+  try {
+    await connectToDevice(device);
+  } catch (err) {
+    console.error(err);
+    setConn('idle', '未连接');
+    toast('连接失败：' + (err && err.message ? err.message : err));
+    if (state.device && state.device.gatt && state.device.gatt.connected) {
+      try { state.device.gatt.disconnect(); } catch (e) {}
+    }
+  }
+}
+
+async function connectToDevice(device) {
+  setConn('connecting', '连接中…');
+  const server = await device.gatt.connect();
+  const service = await server.getPrimaryService('heart_rate');
+  const ch = await service.getCharacteristic('heart_rate_measurement');
+  await ch.startNotifications();
+  ch.addEventListener('characteristicvaluechanged', parseHR);
+
+  state.characteristic = ch;
+  state.connected = true;
+  state.lastDataAt = Date.now();
+  state.reconnectDelay = 1000;
+  setConn('connected', device.name || '心率设备');
+  keepAwake(true);
+  readBattery(server);
+}
+
+async function readBattery(server) {
+  try {
+    const s = await server.getPrimaryService('battery_service');
+    const c = await s.getCharacteristic('battery_level');
+    const v = await c.readValue();
+    state.battery = v.getUint8(0);
+    els.battery.hidden = false;
+    els.battery.textContent = '电量 ' + state.battery + '%';
+  } catch (e) { /* 设备不一定支持 */ }
+}
+
+function onDisconnected() {
+  state.connected = false;
+  state.characteristic = null;
+  if (state.manual || state.demo) { setConn('idle', '未连接'); return; }
+  scheduleReconnect();
+}
+
+function scheduleReconnect() {
+  if (state.reconnectTimer || !state.device || state.manual) return;
+  const delay = state.reconnectDelay;
+  state.reconnectDelay = Math.min(8000, Math.round(state.reconnectDelay * 1.7));
+  setConn('lost', '已断开，' + Math.round(delay / 1000) + 's 后重连…');
+  state.reconnectTimer = setTimeout(async () => {
+    state.reconnectTimer = null;
+    if (state.manual || !state.device) return;
+    try {
+      await connectToDevice(state.device);
+      toast('已重新连接');
+    } catch (err) {
+      scheduleReconnect();
+    }
+  }, delay);
+}
+
+function disconnect() {
+  state.manual = true;
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
+  if (state.demo) stopDemo();
+  if (state.device && state.device.gatt && state.device.gatt.connected) {
+    try { state.device.gatt.disconnect(); } catch (e) {}
+  }
+  state.connected = false;
+  state.characteristic = null;
+  keepAwake(false);
+  els.heart.classList.add('idle');
+  els.battery.hidden = true;
+  setConn('idle', '未连接');
+}
+
+/* ---------------- 屏幕常亮 ---------------- */
+async function keepAwake(on) {
+  try {
+    if (on) {
+      if ('wakeLock' in navigator && !state.wakeLock) {
+        state.wakeLock = await navigator.wakeLock.request('screen');
+        state.wakeLock.addEventListener('release', () => { state.wakeLock = null; });
+      }
+    } else if (state.wakeLock) {
+      await state.wakeLock.release();
+      state.wakeLock = null;
+    }
+  } catch (e) { /* 不支持就算了 */ }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && (state.connected || state.demo)) keepAwake(true);
+});
+
+/* ---------------- 演示模式 ---------------- */
+function startDemo() {
+  if (state.connected) disconnect();
+  state.demo = true;
+  state.manual = false;
+  state.samples = [];
+  els.hint.hidden = true;
+  setConn('demo', '演示模式（模拟数据）');
+  els.btnDemo.textContent = '停止演示';
+
+  let base = 92;
+  const tick = () => {
+    if (!state.demo) return;
+    base += (Math.random() - 0.46) * 3.2;
+    base += Math.sin(Date.now() / 11000) * 0.8;
+    base = Math.min(178, Math.max(62, base));
+    const bpm = Math.round(base);
+    pushSample(bpm, Date.now());
+    state.demoTimer = setTimeout(tick, Math.round(60000 / bpm));
+  };
+  tick();
+}
+
+function stopDemo() {
+  state.demo = false;
+  clearTimeout(state.demoTimer);
+  state.demoTimer = null;
+  els.btnDemo.textContent = '演示模式';
+  els.heart.classList.add('idle');
+  setConn('idle', '未连接');
+}
+
+/* ---------------- 画布 ---------------- */
+const canvas = els.canvas;
+const ctx = canvas.getContext('2d');
+let dpr = 1, cw = 0, chh = 0;
+const view = { lo: 55, hi: 145 };
+
+function resizeCanvas() {
+  const r = canvas.getBoundingClientRect();
+  dpr = Math.min(3, window.devicePixelRatio || 1);
+  cw = Math.max(1, Math.round(r.width));
+  chh = Math.max(1, Math.round(r.height));
+  canvas.width = Math.round(cw * dpr);
+  canvas.height = Math.round(chh * dpr);
+}
+
+function updateView(now) {
+  const win = state.settings.window * 1000;
+  const pts = state.samples.filter((s) => s.t >= now - win);
+  let lo = 60, hi = 140;
+  if (pts.length) {
+    lo = Infinity; hi = -Infinity;
+    for (const p of pts) {
+      if (p.bpm < lo) lo = p.bpm;
+      if (p.bpm > hi) hi = p.bpm;
+    }
+    if (hi - lo < 30) { const mid = (hi + lo) / 2; lo = mid - 15; hi = mid + 15; }
+    const pad = Math.max(8, (hi - lo) * 0.18);
+    lo -= pad; hi += pad;
+  }
+  lo = Math.max(30, Math.floor(lo / 10) * 10);
+  hi = Math.min(230, Math.ceil(hi / 10) * 10);
+  view.lo += (lo - view.lo) * 0.09;
+  view.hi += (hi - view.hi) * 0.09;
+}
+
+function drawChart(now) {
+  const W = cw, H = chh;
+  if (W <= 0 || H <= 0) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  const win = state.settings.window * 1000;
+  const t0 = now - win;
+  const plotW = W - PAD.l - PAD.r;
+  const plotH = H - PAD.t - PAD.b;
+  if (plotW <= 10 || plotH <= 10) return;
+
+  const xOf = (t) => PAD.l + ((t - t0) / win) * plotW;
+  const yOf = (v) => PAD.t + (1 - (v - view.lo) / (view.hi - view.lo)) * plotH;
+  const hrMax = maxHR();
+  const step = (view.hi - view.lo) > 130 ? 40 : 20;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(PAD.l, PAD.t, plotW, plotH);
+  ctx.clip();
+
+  // 心率区间底色
+  for (const z of ZONES) {
+    const a = Math.max(view.lo, z.lo * hrMax);
+    const b = Math.min(view.hi, z.hi * hrMax);
+    if (b <= a) continue;
+    ctx.fillStyle = hexA(z.color, 0.06);
+    ctx.fillRect(PAD.l, yOf(b), plotW, yOf(a) - yOf(b));
+  }
+
+  // 网格
+  ctx.strokeStyle = 'rgba(255,255,255,0.055)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let v = Math.ceil(view.lo / step) * step; v <= view.hi; v += step) {
+    const y = Math.round(yOf(v)) + 0.5;
+    ctx.moveTo(PAD.l, y); ctx.lineTo(W - PAD.r, y);
+  }
+  for (let s = 30000; s < win; s += 30000) {
+    const x = Math.round(xOf(now - s)) + 0.5;
+    ctx.moveTo(x, PAD.t); ctx.lineTo(x, H - PAD.b);
+  }
+  ctx.stroke();
+
+  // 曲线
+  const pts = state.samples.filter((s) => s.t >= t0 - 2000);
+  if (pts.length >= 1) {
+    const lastX = xOf(pts[pts.length - 1].t);
+    const baseY = H - PAD.b;
+
+    ctx.beginPath();
+    ctx.moveTo(xOf(pts[0].t), yOf(pts[0].bpm));
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(xOf(pts[i].t), yOf(pts[i].bpm));
+    ctx.lineTo(lastX, baseY);
+    ctx.lineTo(xOf(pts[0].t), baseY);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, PAD.t, 0, baseY);
+    grad.addColorStop(0, hexA(state.zoneColor, 0.30));
+    grad.addColorStop(1, hexA(state.zoneColor, 0.0));
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(xOf(pts[0].t), yOf(pts[0].bpm));
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(xOf(pts[i].t), yOf(pts[i].bpm));
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = state.zoneColor;
+    ctx.shadowColor = hexA(state.zoneColor, 0.9);
+    ctx.shadowBlur = 14;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    const p = pts[pts.length - 1];
+    const px = xOf(p.t), py = yOf(p.bpm);
+    ctx.beginPath();
+    ctx.arc(px, py, 9, 0, Math.PI * 2);
+    ctx.fillStyle = hexA(state.zoneColor, 0.16);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px, py, 3.6, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 坐标文字
+  ctx.font = '11px ui-monospace, "Cascadia Mono", Consolas, monospace';
+  ctx.fillStyle = 'rgba(150,165,185,0.7)';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let v = Math.ceil(view.lo / step) * step; v <= view.hi; v += step) {
+    ctx.fillText(String(v), PAD.l - 9, yOf(v));
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const ticks = 4;
+  for (let k = 0; k <= ticks; k++) {
+    const s = (win / ticks) * k;
+    const x = xOf(now - win + s);
+    const label = s === win ? '现在' : '-' + Math.round((win - s) / 1000) + 's';
+    ctx.fillText(label, Math.min(W - PAD.r - 12, Math.max(PAD.l + 12, x)), H - PAD.b + 7);
+  }
+
+  // 空状态
+  if (!pts.length) {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(130,145,165,0.55)';
+    ctx.font = '14px "Segoe UI", "Microsoft YaHei UI", sans-serif';
+    ctx.fillText('等待心率数据…', PAD.l + plotW / 2, PAD.t + plotH / 2);
+  }
+}
+
+function updateStats(now) {
+  if (!state.samples.length) {
+    els.statMin.textContent = '--';
+    els.statAvg.textContent = '--';
+    els.statMax.textContent = '--';
+    els.statCount.textContent = '0';
+    els.statTime.textContent = '0:00';
+    return;
+  }
+  let mn = 999, mx = 0, sum = 0;
+  for (const s of state.samples) {
+    if (s.bpm < mn) mn = s.bpm;
+    if (s.bpm > mx) mx = s.bpm;
+    sum += s.bpm;
+  }
+  els.statMin.textContent = String(mn);
+  els.statMax.textContent = String(mx);
+  els.statAvg.textContent = String(Math.round(sum / state.samples.length));
+  els.statCount.textContent = String(state.samples.length);
+  els.statTime.textContent = fmtDur((now - state.samples[0].t) / 1000);
+}
+
+/* ---------------- 主循环 ---------------- */
+let lastStale = false;
+let lastStatsAt = 0;
+function loop() {
+  const now = Date.now();
+  updateView(now);
+  drawChart(now);
+  if (now - lastStatsAt > 250) { lastStatsAt = now; updateStats(now); }
+  if (state.pip) renderMini();
+
+  // 长时间没有新数据 -> 心跳动画暂停
+  if (state.connected && state.lastDataAt && now - state.lastDataAt > 6000) {
+    if (!lastStale) { els.heart.classList.add('idle'); lastStale = true; }
+  } else if (lastStale) {
+    lastStale = false;
+    if (state.connected || state.demo) els.heart.classList.remove('idle');
+  }
+  requestAnimationFrame(loop);
+}
+
+/* ---------------- 导出 ---------------- */
+function exportCsv() {
+  if (!state.samples.length) { toast('还没有心率数据'); return; }
+  const lines = ['时间,心率(bpm)'];
+  for (const s of state.samples) lines.push(fmtClock(s.t) + ',' + s.bpm);
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '心率-' + fmtFileStamp(Date.now()) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  toast('已导出 ' + state.samples.length + ' 条记录');
+}
+
+/* ---------------- 全屏 ---------------- */
+async function toggleFullscreen() {
+  try {
+    if (!document.fullscreenElement) await els.app.requestFullscreen();
+    else await document.exitFullscreen();
+  } catch (e) { toast('全屏失败：' + (e.message || e)); }
+}
+
+/* ---------------- 小窗（画中画置顶） ---------------- */
+const HEART_PATH = 'M16 28.2S1.2 19.1 1.2 9.9C1.2 5 5.1 1.1 9.8 1.1c3.2 0 5.2 1.8 6.2 3.3 1-1.5 3-3.3 6.2-3.3 4.7 0 8.6 3.9 8.6 8.8 0 9.2-14.8 18.3-14.8 18.3z';
+
+function renderMini() {
+  const win = state.pip;
+  if (!win) return;
+  const d = win.document;
+  const num = d.getElementById('miniBpm');
+  const heart = d.getElementById('miniHeart');
+  const zoneEl = d.getElementById('miniZone');
+  if (!num || !heart || !zoneEl) return;
+
+  const bpm = state.lastBpm || 0;
+  const live = !!(state.connected || state.demo);
+  const z = bpm ? zoneOf(bpm) : null;
+  const key = bpm + '|' + (z ? z.name : '') + '|' + live;
+  if (state.miniKey === key) return;
+  state.miniKey = key;
+
+  if (!bpm) {
+    num.textContent = '--';
+    num.style.color = '#fff';
+    heart.classList.add('idle');
+    heart.style.color = '#ff3b5c';
+    zoneEl.textContent = live ? '等待数据' : '未连接';
+    zoneEl.style.color = '#9aa8bb';
+    return;
+  }
+  num.textContent = String(bpm);
+  num.style.color = '#fff';
+  heart.classList.remove('idle');
+  heart.style.color = z.color;
+  heart.style.animationDuration = (60 / bpm).toFixed(3) + 's';
+  zoneEl.textContent = z.name;
+  zoneEl.style.color = z.color;
+}
+
+async function toggleMini() {
+  if (state.pip) { try { state.pip.close(); } catch (e) {} return; }
+
+  const dpip = window.documentPictureInPicture;
+  if (!dpip || !dpip.requestWindow) {
+    toast('当前浏览器不支持小窗置顶，请用 Chrome / Edge 116 以上版本');
+    return;
+  }
+
+  let win;
+  try {
+    win = await dpip.requestWindow({ width: 178, height: 96 });
+  } catch (e) {
+    toast('打开小窗失败：' + (e.message || e));
+    return;
+  }
+
+  const d = win.document;
+  d.title = '心率';
+  d.documentElement.style.background = '#0a0d13';
+  d.documentElement.style.overflow = 'hidden';
+  for (const st of document.querySelectorAll('style')) {
+    const n = d.createElement('style');
+    n.textContent = st.textContent;
+    d.head.appendChild(n);
+  }
+  d.body.className = 'mini-body';
+  d.body.innerHTML =
+    '<div class="mini-card">' +
+      '<svg class="mini-heart idle" id="miniHeart" viewBox="0 0 32 29" aria-hidden="true">' +
+        '<path fill="currentColor" d="' + HEART_PATH + '"/></svg>' +
+      '<div class="mini-num" id="miniBpm">--</div>' +
+      '<div class="mini-side">' +
+        '<div class="mini-unit">BPM</div>' +
+        '<div class="mini-zone" id="miniZone">未连接</div>' +
+      '</div>' +
+    '</div>';
+
+  state.pip = win;
+  state.miniKey = '';
+  els.btnMini.textContent = '关闭小窗';
+  win.addEventListener('pagehide', () => {
+    state.pip = null;
+    state.miniKey = '';
+    els.btnMini.textContent = '小窗置顶';
+  });
+  renderMini();
+  toast('小窗已置顶，可拖动窗口标题栏移动位置');
+}
+
+/* ---------------- 事件绑定 ---------------- */
+els.btnConnect.addEventListener('click', connect);
+els.btnDisconnect.addEventListener('click', disconnect);
+els.btnDemo.addEventListener('click', () => { state.demo ? stopDemo() : startDemo(); });
+els.btnFull.addEventListener('click', toggleFullscreen);
+els.btnMini.addEventListener('click', toggleMini);
+els.btnExport.addEventListener('click', exportCsv);
+els.btnSettings.addEventListener('click', (e) => {
+  e.stopPropagation();
+  els.panel.hidden = !els.panel.hidden;
+});
+document.addEventListener('click', (e) => {
+  if (!els.panel.hidden && !els.panel.contains(e.target) && e.target !== els.btnSettings) {
+    els.panel.hidden = true;
+  }
+});
+
+els.inAge.addEventListener('change', () => {
+  state.settings.age = clampNum(els.inAge.value, 5, 100, 30);
+  els.inAge.value = state.settings.age;
+  saveSettings();
+});
+els.inMax.addEventListener('change', () => {
+  state.settings.maxhr = clampNum(els.inMax.value, 0, 230, 0);
+  els.inMax.value = state.settings.maxhr || '';
+  saveSettings();
+});
+els.inWin.addEventListener('change', () => {
+  state.settings.window = Number(els.inWin.value) || 120;
+  saveSettings();
+});
+
+document.addEventListener('keydown', (e) => {
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (state.connected || state.demo) disconnect();
+    else connect();
+  } else if (e.key === 'f' || e.key === 'F') {
+    toggleFullscreen();
+  } else if (e.key === 'd' || e.key === 'D') {
+    state.demo ? stopDemo() : startDemo();
+  } else if (e.key === 'e' || e.key === 'E') {
+    exportCsv();
+  } else if (e.key === 'm' || e.key === 'M') {
+    toggleMini();
+  }
+});
+
+window.addEventListener('resize', resizeCanvas);
+if (window.ResizeObserver) new ResizeObserver(resizeCanvas).observe(canvas.parentElement);
+
+/* ---------------- 启动 ---------------- */
+loadSettings();
+resizeCanvas();
+if (!navigator.bluetooth) {
+  els.warn.hidden = false;
+  els.btnConnect.disabled = true;
+}
+if (/[?&]demo\b/.test(location.search)) setTimeout(startDemo, 200);
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

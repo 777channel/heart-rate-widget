@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.log
+挂件设置.json
+build/
+dist/
+*.spec
+
+!assets/*.png
+!heart-rate.html
+!releases/*.zip
